@@ -53,6 +53,7 @@ class ModelType(Enum):
 
     # todo: Currently available models, i want to remove this restriction and allow any string to be used in the future.
     LOCAL_LLAMA_2_UNCENSORED_7B = 'llama2-uncensored:7b'
+    LOCAL_LLAMA_OPEN_HERMES = 'openhermes'
 
     STUB = "stub"
 

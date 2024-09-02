@@ -80,44 +80,37 @@ class OpenAIModel(ModelBackend):
         gap_between_send_receive = 15 * len(kwargs["messages"])
         num_prompt_tokens += gap_between_send_receive
 
-        if RUN_LOCALLY:
-            client = LocalAI(
-                base_url=BASE_URL,
-                decentralize=DECENTRALIZE,
-            )
-
-            # numbers in this map are more dependent on the host's hardware rather than the model itself
+        if not openai_new_api:
             num_max_token_map = {
-                'openhermes': 4096,
-                'llama2-uncensored:7b': 4096,
+                "gpt-3.5-turbo": 4096,
+                "gpt-3.5-turbo-16k": 16384,
+                "gpt-3.5-turbo-0613": 4096,
+                "gpt-3.5-turbo-16k-0613": 16384,
+                "gpt-4": 8192,
+                "gpt-4-0613": 8192,
+                "gpt-4-32k": 32768,
             }
-
-            # ERR: Could not automatically map llama2-uncensored:7b to a tokeniser.
-            #      Please use `tiktok.get_encoding` to explicitly get the tokeniser you expect
-            # We do not have to set this, it's just a tokenizing agent and estimates are enough.
-            # note: Enum entry was added, this did not fix the underlying issue
-            #self.model_type = ModelType('llama2-uncensored:7b')
-
-            num_max_token = num_max_token_map['openhermes']
+            num_max_token = num_max_token_map[self.model_type.value]
             num_max_completion_tokens = num_max_token - num_prompt_tokens
             self.model_config_dict['max_tokens'] = num_max_completion_tokens
 
-            response = client.chat.completions.create(*args, **kwargs, model=self.model_type.value,
-                                                      **self.model_config_dict)
+            response = openai.ChatCompletion.create(*args, **kwargs, model=self.model_type.value,
+                                                    **self.model_config_dict)
 
-            # note: removed cost calculation, completely unnecessary for locally run models
+            cost = prompt_cost(
+                self.model_type.value,
+                num_prompt_tokens=response["usage"]["prompt_tokens"],
+                num_completion_tokens=response["usage"]["completion_tokens"]
+            )
 
             log_visualize(
-                "**[OpenAI_Usage_Info Receive]**\nprompt_tokens: {}\ncompletion_tokens: {}\ntotal_tokens: {}\n".format(
-                    response.usage.prompt_tokens, response.usage.completion_tokens, response.usage.total_tokens))
-
-            # todo: response is not an instance of ChatCompletion, causing this error to trigger
-            #       either remove any constraints, or perfectly imitate ChatCompletion and overwrite typename
-            # for now opting-in for the former option - removing constrains while recreating the necessary parts
-            if not isinstance(response, LocalChatCompletion):
-                raise RuntimeError("Unexpected return from ollama API")
+                "**[OpenAI_Usage_Info Receive]**\nprompt_tokens: {}\ncompletion_tokens: {}\ntotal_tokens: {}\ncost: ${:.6f}\n".format(
+                    response["usage"]["prompt_tokens"], response["usage"]["completion_tokens"],
+                    response["usage"]["total_tokens"], cost))
+            if not isinstance(response, Dict):
+                raise RuntimeError("Unexpected return from OpenAI API")
             return response
-        elif openai_new_api:
+        else:
             # Experimental, add base_url
             if BASE_URL:
                 client = openai.OpenAI(
@@ -160,36 +153,6 @@ class OpenAIModel(ModelBackend):
             if not isinstance(response, ChatCompletion):
                 raise RuntimeError("Unexpected return from OpenAI API")
             return response
-        else:
-            num_max_token_map = {
-                "gpt-3.5-turbo": 4096,
-                "gpt-3.5-turbo-16k": 16384,
-                "gpt-3.5-turbo-0613": 4096,
-                "gpt-3.5-turbo-16k-0613": 16384,
-                "gpt-4": 8192,
-                "gpt-4-0613": 8192,
-                "gpt-4-32k": 32768,
-            }
-            num_max_token = num_max_token_map[self.model_type.value]
-            num_max_completion_tokens = num_max_token - num_prompt_tokens
-            self.model_config_dict['max_tokens'] = num_max_completion_tokens
-
-            response = openai.ChatCompletion.create(*args, **kwargs, model=self.model_type.value,
-                                                    **self.model_config_dict)
-
-            cost = prompt_cost(
-                self.model_type.value,
-                num_prompt_tokens=response["usage"]["prompt_tokens"],
-                num_completion_tokens=response["usage"]["completion_tokens"]
-            )
-
-            log_visualize(
-                "**[OpenAI_Usage_Info Receive]**\nprompt_tokens: {}\ncompletion_tokens: {}\ntotal_tokens: {}\ncost: ${:.6f}\n".format(
-                    response["usage"]["prompt_tokens"], response["usage"]["completion_tokens"],
-                    response["usage"]["total_tokens"], cost))
-            if not isinstance(response, Dict):
-                raise RuntimeError("Unexpected return from OpenAI API")
-            return response
 
 
 class StubModel(ModelBackend):
@@ -209,6 +172,60 @@ class StubModel(ModelBackend):
                      message=dict(content=ARBITRARY_STRING, role="assistant"))
             ],
         )
+
+
+class OllamaModel(ModelBackend):
+    r"""A Ollama model used for all ollama Models."""
+
+    def __init__(self, model_type: ModelType, model_config_dict: Dict) -> None:
+        super().__init__()
+        self.model_type = model_type
+        self.model_config_dict = model_config_dict
+        self.value = "gpt2"
+
+    def run(self, *args, **kwargs):
+        string = "\n".join([message["content"] for message in kwargs["messages"]])
+        encoding = tiktoken.encoding_for_model("gpt2")
+        num_prompt_tokens = len(encoding.encode(string))
+        gap_between_send_receive = 15 * len(kwargs["messages"])
+        num_prompt_tokens += gap_between_send_receive
+
+        client = LocalAI(
+            base_url=BASE_URL,
+            decentralize=False,
+        )
+
+        # numbers in this map are more dependent on the host's hardware rather than the model itself
+        num_max_token_map = {
+            'openhermes': 4096,
+            'llama2-uncensored:7b': 4096,
+        }
+
+        # ERR: Could not automatically map llama2-uncensored:7b to a tokeniser.
+        #      Please use `tiktok.get_encoding` to explicitly get the tokeniser you expect
+        # We do not have to set this, it's just a tokenizing agent and estimates are enough.
+        # note: Enum entry was added, this did not fix the underlying issue
+        # self.model_type = ModelType('llama2-uncensored:7b')
+
+        num_max_token = num_max_token_map['openhermes']
+        num_max_completion_tokens = num_max_token - num_prompt_tokens
+        self.model_config_dict['max_tokens'] = num_max_completion_tokens
+
+        response = client.chat.completions.create(*args, **kwargs, model=self.model_type.value,
+                                                  **self.model_config_dict)
+
+        # note: removed cost calculation, completely unnecessary for locally run models
+
+        log_visualize(
+            "**[OpenAI_Usage_Info Receive]**\nprompt_tokens: {}\ncompletion_tokens: {}\ntotal_tokens: {}\n".format(
+                response.usage.prompt_tokens, response.usage.completion_tokens, response.usage.total_tokens))
+
+        # todo: response is not an instance of ChatCompletion, causing this error to trigger
+        #       either remove any constraints, or perfectly imitate ChatCompletion and overwrite typename
+        # for now opting-in for the former option - removing constrains while recreating the necessary parts
+        if not isinstance(response, LocalChatCompletion):
+            raise RuntimeError("Unexpected return from ollama API")
+        return response
 
 
 class ModelFactory:
@@ -231,9 +248,11 @@ class ModelFactory:
             ModelType.GPT_4_TURBO_V,
             None
         }:
-            model_class = OpenAIModel
+            model_class = OpenAIModel(ModelBackend)
         elif model_type == ModelType.STUB:
             model_class = StubModel
+        elif model_type == ModelType.LOCAL_LLAMA_OPEN_HERMES:
+            model_class = OllamaModel
         else:
             raise ValueError("Unknown model")
 

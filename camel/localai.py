@@ -126,7 +126,7 @@ class LocalAI:
                 }
 
                 response = requests.post(url=request_url, json=request_data, stream=True)
-                response.raise_for_status()
+                # response.raise_for_status()
 
                 response_stream = response.iter_lines()
                 response_list = []
@@ -219,10 +219,10 @@ class LocalAI:
 
     def __init__(self, base_url=None, decentralize=False):
         # base_url will only ever be used when DECENTRALIZE is set to 0 or not set at all
-        if base_url:
+        if base_url and decentralize:
             self.base_url = base_url
         else:
-            self.base_url = 'http://localhost:11434/'
+            self.base_url = 'http://192.168.178.120:7869/'
 
         # tested 3 models in total:
         """

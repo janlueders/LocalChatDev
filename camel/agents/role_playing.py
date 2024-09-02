@@ -240,6 +240,7 @@ class RolePlaying:
         user_msg_rst = user_msg.set_user_role_at_backend()
         assistant_response = self.assistant_agent.step(user_msg_rst)
         if assistant_response.terminated or assistant_response.msgs is None:
+            print(assistant_response.msgs)
             return (
                 ChatAgentResponse([assistant_response.msgs], assistant_response.terminated, assistant_response.info),
                 ChatAgentResponse([], False, {}))
